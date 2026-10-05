@@ -11,6 +11,7 @@
     "node": ">=22"
   },
   "scripts": {
+    "build:electron": "node scripts/build-electron.mjs",
     "test": "vitest run",
     "typecheck:electron": "tsc --noEmit -p electron/tsconfig.json",
     "lint": "eslint .",
