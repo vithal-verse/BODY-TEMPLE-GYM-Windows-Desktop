@@ -1,10 +1,16 @@
+"use client";
+
+import { Suspense } from "react";
 import Link from "next/link";
 import { UserPlus } from "lucide-react";
-import { getMembers } from "@/lib/members";
+import { api } from "@/lib/api";
+import { useAsync } from "@/lib/use-async";
 import MembersTable from "@/components/members-table";
+import { PageState } from "@/components/page-state";
 
-export default async function MembersPage() {
-  const members = await getMembers();
+export default function MembersPage() {
+  const { data } = useAsync(() => api.members.list({ pageSize: 1 }), []);
+  const total = data?.total;
 
   return (
     <div className="flex flex-col gap-6">
@@ -12,8 +18,7 @@ export default async function MembersPage() {
         <div>
           <h2 className="font-display text-2xl text-paper">All members</h2>
           <p className="font-body text-sm text-paper/40">
-            {members.length} {members.length === 1 ? "member" : "members"} on
-            record.
+            {total === undefined ? "Loading…" : `${total} ${total === 1 ? "member" : "members"} on record.`}
           </p>
         </div>
         <Link
@@ -25,7 +30,9 @@ export default async function MembersPage() {
         </Link>
       </div>
 
-      <MembersTable members={members} />
+      <Suspense fallback={<PageState />}>
+        <MembersTable />
+      </Suspense>
     </div>
   );
 }
