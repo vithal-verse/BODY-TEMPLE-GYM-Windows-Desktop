@@ -4,7 +4,8 @@ import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { addMonths, addDays, format, isAfter, parseISO } from "date-fns";
 import { Loader2, RotateCw, Banknote, Smartphone, CreditCard, MoreHorizontal } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
+import { api, errorMessage } from "@/lib/api";
+import { useRefresh } from "@/components/session-provider";
 import { playChime } from "@/lib/sounds";
 import { formatDate, cn } from "@/lib/utils";
 import type { Member, MembershipPlan, PaymentMethod } from "@/types/database";
@@ -40,6 +41,7 @@ export default function RenewForm({
   plans: MembershipPlan[];
 }) {
   const router = useRouter();
+  const refresh = useRefresh();
   const defaultPlanId =
     plans.find((p) => p.id === member.plan_id)?.id.toString() ??
     plans[0]?.id.toString() ??
@@ -87,75 +89,26 @@ export default function RenewForm({
     setError(null);
     setLoading(true);
 
-    const supabase = createClient();
-    const plan = plans.find((p) => p.id.toString() === planId);
-    const dueAmount = amountDue ? parseFloat(amountDue) : 0;
-    const paidNow = payingNow ? parseFloat(payingNow) : 0;
-
-    const term = {
-      plan_id: planId ? parseInt(planId, 10) : null,
-      plan_name: plan?.name ?? null,
-      amount: paidNow,
-      amount_due: dueAmount,
-      start_date: startDate,
-      end_date: endDate || null,
-    };
-
-    // Log the new term first...
-    const { data: insertedRenewal, error: renewalError } = await supabase
-      .from("renewals")
-      .insert({ member_id: member.id, ...term })
-      .select("id")
-      .single();
-
-    if (renewalError || !insertedRenewal) {
-      setLoading(false);
-      setError(renewalError?.message ?? "Couldn't start the new term.");
-      return;
-    }
-
-    // ...then the payment against it, if anything was collected now...
-    if (paidNow > 0) {
-      const { error: paymentError } = await supabase.from("payments").insert({
-        member_id: member.id,
-        renewal_id: insertedRenewal.id,
-        amount: paidNow,
-        method,
+    try {
+      // One atomic step in the main process: new term + payment + member update (clears any pause).
+      await api.members.renew({
+        id: member.id,
+        input: {
+          plan_id: planId ? parseInt(planId, 10) : null,
+          start_date: startDate,
+          end_date: endDate || null,
+          amount_due: amountDue ? parseFloat(amountDue) : 0,
+          paid_now: payingNow ? parseFloat(payingNow) : 0,
+          method,
+        },
       });
-      if (paymentError) {
-        console.error("Failed to log renewal payment:", paymentError.message);
-      }
+      playChime();
+      refresh();
+      router.push(`/dashboard/members/detail?id=${member.id}`);
+    } catch (err) {
+      setLoading(false);
+      setError(errorMessage(err));
     }
-
-    // ...then make it the member's current term. Explicitly clearing
-    // paused_at and setting status here matters: if they were paused,
-    // renewing is clearly them coming back — the trigger alone wouldn't
-    // touch status if paused_at/status were left unset, since it never
-    // overrides an explicit pause.
-    const { error: memberError } = await supabase
-      .from("members")
-      .update({
-        plan_id: term.plan_id,
-        plan_name: term.plan_name,
-        fees_paid: term.amount,
-        amount_due: term.amount_due,
-        start_date: term.start_date,
-        end_date: term.end_date,
-        status: "active",
-        paused_at: null,
-      })
-      .eq("id", member.id);
-
-    setLoading(false);
-
-    if (memberError) {
-      setError(memberError.message);
-      return;
-    }
-
-    playChime();
-    router.push(`/dashboard/members/${member.id}`);
-    router.refresh();
   }
 
   return (
