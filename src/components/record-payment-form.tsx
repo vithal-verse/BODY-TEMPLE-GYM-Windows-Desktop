@@ -3,7 +3,8 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Banknote, Smartphone, CreditCard, MoreHorizontal } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
+import { api, errorMessage } from "@/lib/api";
+import { useRefresh } from "@/components/session-provider";
 import { playChime } from "@/lib/sounds";
 import { formatCurrency, cn } from "@/lib/utils";
 import type { Member, Renewal, PaymentMethod } from "@/types/database";
@@ -23,6 +24,7 @@ export default function RecordPaymentForm({
   currentRenewal: Renewal;
 }) {
   const router = useRouter();
+  const refresh = useRefresh();
   const outstanding = Math.max(0, member.amount_due - member.fees_paid);
 
   const [amount, setAmount] = useState(
@@ -44,45 +46,16 @@ export default function RecordPaymentForm({
     }
 
     setLoading(true);
-    const supabase = createClient();
-
-    const { error: paymentError } = await supabase.from("payments").insert({
-      member_id: member.id,
-      renewal_id: currentRenewal.id,
-      amount: paidAmount,
-      method,
-      notes: notes.trim() || null,
-    });
-
-    if (paymentError) {
+    try {
+      // Records the payment and updates the member's total and the current term together.
+      await api.members.recordPayment({ id: member.id, input: { amount: paidAmount, method, notes: notes.trim() || null } });
+      playChime();
+      refresh();
+      router.push(`/dashboard/members/detail?id=${member.id}`);
+    } catch (err) {
       setLoading(false);
-      setError(paymentError.message);
-      return;
+      setError(errorMessage(err));
     }
-
-    const newTotalPaid = member.fees_paid + paidAmount;
-
-    const [{ error: memberError }, { error: renewalError }] = await Promise.all([
-      supabase
-        .from("members")
-        .update({ fees_paid: newTotalPaid })
-        .eq("id", member.id),
-      supabase
-        .from("renewals")
-        .update({ amount: currentRenewal.amount + paidAmount })
-        .eq("id", currentRenewal.id),
-    ]);
-
-    setLoading(false);
-
-    if (memberError || renewalError) {
-      setError((memberError ?? renewalError)!.message);
-      return;
-    }
-
-    playChime();
-    router.push(`/dashboard/members/${member.id}`);
-    router.refresh();
   }
 
   return (
