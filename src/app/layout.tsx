@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { MotionConfig } from "framer-motion";
 import ParticleBackground from "@/components/particle-background";
+import { SessionProvider } from "@/components/session-provider";
+import { DialogProvider } from "@/components/dialog-provider";
 import "@fontsource/geist-sans/400.css";
 import "@fontsource/geist-sans/500.css";
 import "@fontsource/geist-sans/600.css";
@@ -32,7 +34,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             app automatically respect the OS-level "reduce motion"
             accessibility setting, without needing to check it manually
             in each component. */}
-        <MotionConfig reducedMotion="user">{children}</MotionConfig>
+        <MotionConfig reducedMotion="user">
+          <SessionProvider>
+            <DialogProvider>{children}</DialogProvider>
+          </SessionProvider>
+        </MotionConfig>
       </body>
     </html>
   );
