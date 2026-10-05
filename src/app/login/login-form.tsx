@@ -3,7 +3,9 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { createClient } from "@/lib/supabase/client";
+import Link from "next/link";
+import { api, errorMessage } from "@/lib/api";
+import { useSession } from "@/components/session-provider";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 
 const container = {
@@ -18,6 +20,7 @@ const fieldIn = {
 
 export default function LoginForm() {
   const router = useRouter();
+  const { setSession } = useSession();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -29,24 +32,13 @@ export default function LoginForm() {
     setError(null);
     setLoading(true);
 
-    const supabase = createClient();
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (signInError) {
-      setError(
-        signInError.message === "Invalid login credentials"
-          ? "That email and password don't match our records."
-          : signInError.message
-      );
+    try {
+      setSession(await api.auth.login({ email, password }));
+      router.replace("/dashboard/");
+    } catch (err) {
+      setError(errorMessage(err));
       setLoading(false);
-      return;
     }
-
-    router.push("/dashboard");
-    router.refresh();
   }
 
   return (
@@ -144,6 +136,10 @@ export default function LoginForm() {
           "Log in"
         )}
       </motion.button>
+
+      <Link href="/login/recover/" className="self-center font-body text-sm text-paper/45 transition-colors hover:text-mango">
+        Forgot your password?
+      </Link>
     </motion.form>
   );
 }
