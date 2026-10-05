@@ -6,9 +6,7 @@ It is a migration of the original Next.js + Supabase + Vercel admin panel, keepi
 workflows and calculations, but with **all data stored locally in SQLite** and **no internet,
 Vercel or Supabase required**.
 
-> **Status: Checkpoint 1 — foundation only (not runnable yet).** The database layer, schema,
-> migrations, shared IPC contract, logger and tests are done. The Electron main process, the
-> renderer port and the installer are still to come. See [DESKTOP-MIGRATION.md](./DESKTOP-MIGRATION.md)
+> **Status: Checkpoint 3 — the database, services, secure Electron shell and about half of the UI port are done and tested; the remaining screens and the installer are still to come (so the app can't be used yet).** See [DESKTOP-MIGRATION.md](./DESKTOP-MIGRATION.md)
 > for the exact status, decisions, feature-parity checklist and remaining work.
 
 ## Architecture
@@ -37,6 +35,7 @@ Requirements: Node.js 22+.
 npm install --ignore-scripts   # why: see the note below
 npm test                       # database + helper tests
 npm run typecheck:electron     # strict type-check of electron/ and shared/
+npm run build:electron         # bundle the Electron main + preload scripts
 npm run setup:electron         # downloads the Electron binary (only needed once Phase 3 lands)
 ```
 
@@ -46,7 +45,7 @@ Line Tools on macOS, Visual Studio Build Tools on Windows) and access to nodejs.
 scripts avoids that and the bundled binary is used. If you prefer the plain `npm install` and it works on
 your machine, that is fine too.
 
-`npm run dev`, `build` and `dist:win` arrive with Phases 3–4 (see the migration doc).
+`npm run dev`, `build` and `dist:win` arrive once the UI port and packaging are finished (see the migration doc).
 
 ## Where data lives *(implemented in Phase 2)*
 
