@@ -3,18 +3,18 @@
 Migration of the existing Next.js + Supabase + Vercel web app into an offline-first
 Windows desktop app (Electron + Next.js + React + TypeScript + SQLite).
 
-> ## ⚠️ Status: Checkpoint 1 of 4 — foundation only. **Not runnable yet.**
+> ## ⚠️ Status: Checkpoint 3 of 4 — backend + Electron shell done, UI port about half done. **The app isn't usable yet.**
 >
 > | Phase | Scope | State |
 > |---|---|---|
 > | 1 | Architecture decisions, shared IPC contract, SQLite schema + migration runner, DB manager, logger, tests | ✅ done & tested (32 tests) |
-> | 2 | Main-process services (auth, members, attendance, revenue, backup/restore, Sheets, importer), validated IPC, secure main window, preload, esbuild bundling | ⬜ not started |
-> | 3 | Renderer port: replace every Supabase call with `window.gym`, auth guard + first-run setup, route changes, new Settings screens | ⬜ not started |
+> | 2 | Main-process services (auth, members, attendance, revenue, backup/restore, Sheets, importer), validated IPC, secure main window, preload, esbuild bundling | ✅ done & tested (122 tests + a real-Electron smoke test) |
+> | 3 | Renderer port: replace every Supabase call with `window.gym`, auth guard + first-run setup, route changes, new Settings screens | 🔄 about half done (see §6) |
 > | 4 | electron-builder NSIS installer, icons, GitHub Actions Windows build, full test pass, final docs | ⬜ not started |
 >
-> The renderer in `src/` is **still the original web UI** and several files import modules that
-> were intentionally removed (`@/lib/supabase/*`), so `next build` fails until Phase 3.
-> `npm test` and `npm run typecheck:electron` pass today. Everything else is below as a plan.
+> Eleven UI files in `src/` still use the old data layer or old props (listed in §6), so `next build`
+> fails until they are ported.
+> `npm test` and `npm run typecheck:electron` pass today.
 
 ---
 
@@ -145,45 +145,58 @@ Import from Supabase (live API or exported CSV/JSON folder) · log viewer shortc
 ## 5. What exists in this checkpoint
 
 ```
-shared/        types.ts (domain + DTOs) · api.ts (IPC contract + allow-list) · errors.ts · money.ts
-               csv.ts · trends.ts · status.ts
-electron/      database/{connection,manager,migrate}.ts · database/migrations/001_initial.ts
-               services/logger.ts (daily files, secret redaction)
-tests/         database.test.ts (18) · shared.test.ts (14)
-legacy/        original Supabase SQL + removed web files (reference only)
+shared/      domain types · IPC contract + allow-list (api.ts) · errors · money · csv · trends · status · validation
+electron/
+  database/  connection · versioned migrations · integrity checks · manager (open / close / checkpoint)
+  services/  auth · plans · members · attendance · reports (dashboard, revenue, CSV) · backup & restore
+             sheets · importer · settings · logger · platform interface
+  ipc/       zod schemas + one handler per API method · dispatcher (access control) · error translation
+  main/      paths · app:// protocol (+ CSP) · hardened window & menu · native dialogs / secret storage · entry
+  preload/   the window.gym bridge (generated from the allow-list)
+scripts/     build-electron.mjs (esbuild → dist-electron/)
+tests/       122 tests in 10 files
+src/         UI — ported parts listed in §6
+legacy/      original Supabase SQL + removed web files (reference only)
 ```
 
-Verified here (Linux sandbox): schema creates on first launch incl. missing folders; WAL/FK/synchronous
-pragmas; seed plans; one-active-check-in rule; cascades; `ON DELETE SET NULL` keeps `plan_name`;
-CHECK constraints; failed migration rolls back fully; newer-schema databases are refused; damaged file →
-friendly error; money/CSV/status/trend helpers; logs never contain passwords. Electron 44's bundled Node
-loads `better-sqlite3` 13 correctly.
+Verified here (Linux sandbox):
+- **122 automated tests**: schema + constraints, migration rollback, auth (hashing, lock-out, recovery code, roles),
+  members (create / edit / renew / pause / payment / status expiry / search / sort / pagination), attendance,
+  dashboard + revenue figures, CSV export, backup & restore (online backup under concurrent writes, rollback on a
+  failed swap, older-schema migration), Google Sheets sync against a fake Google (JWT signature, push, pull, conflicts),
+  Supabase import (exact money, id preservation, orphan skipping, paging, error cases), and the IPC pipeline
+  (allow-list is exhaustive, access levels frozen, untrusted senders blocked, injection-style input rejected).
+- **A real Electron run** (Electron 44 under Xvfb): boots, creates its data folders and database, serves the page over
+  `app://` with a CSP header, exposes only the allow-listed `window.gym` (no `require` / `process` / `Buffer`), enforces login
+  and validation over real IPC, returns 404 for path traversal, blocks outbound `fetch`, and shuts down cleanly.
 
-**Not verified (cannot be, from this sandbox):** any Windows build, the installer, UI behaviour,
-an in-place update on a real PC.
+**Not verified (cannot be, from this sandbox):** any Windows build, the installer, the ported screens in a running app,
+an in-place update on a real PC, Google Sheets against real Google, or a Supabase import against a real project.
 
 ## 6. Remaining work
 
-**Phase 2 — main process.** Services: `auth` (setup/login/lockout/recovery/change password/admins),
-`plans`, `members` (create/update/renew/pause/resume/payment/delete, all in `runInTransaction`),
-`attendance`, `dashboard`, `revenue`, `exports` (native Save dialog), `backup` (online backup, verify,
-rotate, restore swap, auto schedule, secondary folder), `sheets`, `importer`
-(Supabase REST with service key, or CSV/JSON folder; `merge`/`replace`; pre-import backup; summary of
-skipped rows). `ipc/` registers one zod-validated handler per `API_METHODS` entry and returns
-`Result<T>`; SQLite errors map to friendly messages and are logged. `main/`: single-instance lock, window,
-`app://` protocol with path-traversal guard, CSP, permission denial, startup error dialog, status sweep.
-`preload/`: builds `window.gym` from `API_METHODS`. `scripts/build-electron.mjs` (esbuild; `better-sqlite3`
-external). Add a test file per service plus an IPC allow-list test.
+### Phase 3 — renderer (about half done)
 
-**Phase 3 — renderer.** `src/lib/api.ts` (unwrap `Result`, typed `AppError`), auth provider + guard,
-setup/login screens, query-param member routes, convert pages to client loaders, swap Supabase calls,
-Settings (Plans · Data safety · Google Sheets · Import · Account), `scripts/dev.mjs`.
-Then run the checklist in §3 top-to-bottom against the original screens.
+**Done:** `src/lib/{api,use-async}.ts`; `components/{session-provider,dialog-provider,page-state,ui,auth-shell}.tsx`;
+screens: root redirect, login (+ password recovery), first-run setup with recovery code, dashboard shell and overview,
+member add / detail / edit / renew / pay (now query-param routes, e.g. `/dashboard/members/detail?id=…`), the four forms
+(member, renew, payment, pause/resume), top bar (sign out), sidebar (Settings entry). All compile cleanly.
 
-**Phase 4 — Windows.** `electron-builder` (NSIS, x64, `perMachine:false`, `deleteAppDataOnUninstall:false`,
-artifact `BodyTempleGym-Setup.exe`), `.ico` generated from `public/brand/logo-512.png`,
-`.github/workflows/build-windows.yml` (`windows-latest`), update-in-place test (install v1 → add data →
-install v2 → data intact), README final pass.
+**Still on the old data layer / props** (these are the only files stopping `next build`):
+- `components/members-table.tsx` → server-side search / filter / sort / pagination via `api.members.list`; delete via `api.members.remove`
+- `components/check-in-panel.tsx` → `api.members.search`, `api.attendance.checkIn` / `checkOut`
+- `components/attendance-manager.tsx`, `attendance-overview.tsx`, `attendance-history.tsx` (+ the type import in `attendance-trend-chart.tsx`) → `api.attendance.*`, history paged on the server
+- `components/export-panel.tsx` → `api.exports.members()` (native Save dialog); preview via `api.members.list({ pageSize: 5, sortKey: "created_at" })`
+- `components/revenue-dashboard.tsx`, `revenue-trend-chart.tsx`, `revenue-method-breakdown.tsx`, `revenue-transactions-table.tsx` → `api.revenue.report` / `trend`, `api.exports.revenue`
+- `app/dashboard/settings/page.tsx` (new): Plans · Data safety (backup / restore / auto-backup / integrity) · Google Sheets · Import · Account (password, admins, logs). The sidebar and the File menu already link to it.
+
+Then: add the `build:renderer` / `dev` / `start` scripts, run lint + a full `next build`, and walk the §3 checklist against the original screens.
+
+### Phase 4 — Windows
+`electron-builder` (NSIS, x64, `perMachine:false`, `deleteAppDataOnUninstall:false`, artifact `BodyTempleGym-Setup.exe`,
+`npmRebuild:false` + `asarUnpack` for `better-sqlite3`), `.ico` generated from `public/brand/logo-512.png`,
+`.github/workflows/build-windows.yml` (`windows-latest`), update-in-place test (install v1 → add data → install v2 → data intact),
+final README pass.
 
 ## 7. Known limitations to expect
 
@@ -200,8 +213,8 @@ install v2 → data intact), README final pass.
 
 ```bash
 npm install --ignore-scripts   # avoids an unnecessary node-gyp compile of better-sqlite3 (see README)
-npm test                       # 32 tests
+npm test                       # 122 tests
 npm run typecheck:electron
+npm run build:electron         # bundles the Electron main + preload scripts into dist-electron/
 ```
-Then implement Phase 2 in the order listed in §6 (auth → plans → members → attendance → dashboard/revenue →
-backup → ipc/main/preload → sheets → importer), keeping `npm test` green after each service.
+Then finish Phase 3 from the list in §6, keeping `npm test` green.
