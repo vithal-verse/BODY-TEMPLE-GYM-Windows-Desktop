@@ -1,9 +1,8 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { LogOut } from "lucide-react";
 import { motion } from "framer-motion";
-import { createClient } from "@/lib/supabase/client";
+import { useSession } from "@/components/session-provider";
 import { initials } from "@/lib/utils";
 import SoundToggle from "@/components/sound-toggle";
 
@@ -14,13 +13,10 @@ export default function TopBar({
   displayName: string;
   email: string;
 }) {
-  const router = useRouter();
+  const { signOut } = useSession();
 
   async function handleSignOut() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.push("/login");
-    router.refresh();
+    await signOut();
   }
 
   return (
