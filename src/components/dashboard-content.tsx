@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Users, UserCheck, UserX, Wallet, ClipboardCheck, ArrowRight } from "lucide-react";
-import type { DashboardStats } from "@/lib/members";
+import type { DashboardStats } from "@/types/database";
 import { formatCurrency, formatDate, daysUntil, cn } from "@/lib/utils";
 import StatCard from "@/components/stat-card";
 import RevenueChart from "@/components/revenue-chart";
@@ -127,7 +127,7 @@ export default function DashboardContent({ stats }: { stats: DashboardStats }) {
                   <motion.li key={m.id} variants={listItemVariants}>
                     <motion.div whileHover={{ x: 6 }} whileTap={{ x: 2 }}>
                       <Link
-                        href={`/dashboard/members/${m.id}/renew`}
+                        href={`/dashboard/members/renew?id=${m.id}`}
                         className="flex items-center justify-between border-2 border-ink-line px-4 py-3 transition-colors hover:border-mango"
                       >
                         <div>
