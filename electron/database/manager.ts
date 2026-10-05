@@ -27,6 +27,11 @@ export class DatabaseManager {
     return this.conn;
   }
 
+  /** Newest schema version this build understands (backups newer than this are refused). */
+  get latestVersion(): number {
+    return this.migrations[this.migrations.length - 1]?.version ?? 0;
+  }
+
   get isOpen(): boolean {
     return this.conn !== null;
   }
