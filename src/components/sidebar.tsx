@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { LayoutGrid, ClipboardCheck, TrendingUp, Users, UserPlus, Download, X, Menu } from "lucide-react";
+import { LayoutGrid, ClipboardCheck, TrendingUp, Users, UserPlus, Download, Settings, X, Menu } from "lucide-react";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -16,10 +16,12 @@ const NAV_ITEMS = [
   { href: "/dashboard/members", label: "Members", icon: Users },
   { href: "/dashboard/members/new", label: "Add member", icon: UserPlus },
   { href: "/dashboard/export", label: "Export data", icon: Download },
+  { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 
 function isNavItemActive(pathname: string, href: string) {
-  return href === "/dashboard" ? pathname === href : pathname.startsWith(href);
+  const p = pathname.replace(/\/+$/, "") || "/"; // static export serves routes with a trailing slash
+  return href === "/dashboard" ? p === href : p === href || p.startsWith(href + "/");
 }
 
 // Declared outside Sidebar so it isn't re-created (and thus fully
