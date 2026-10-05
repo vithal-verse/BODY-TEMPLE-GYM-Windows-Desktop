@@ -3,11 +3,12 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Save, Banknote, Smartphone, CreditCard, MoreHorizontal } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
+import { api, errorMessage } from "@/lib/api";
+import { useRefresh } from "@/components/session-provider";
 import { playClink, playChime } from "@/lib/sounds";
 import { cn } from "@/lib/utils";
 import type { Member, MembershipPlan, PaymentMethod } from "@/types/database";
-import { addMonths, format } from "date-fns";
+import { addMonths, format, parseISO } from "date-fns";
 
 const PAYMENT_METHODS: { value: PaymentMethod; label: string; icon: typeof Banknote }[] = [
   { value: "cash", label: "Cash", icon: Banknote },
@@ -24,6 +25,7 @@ export default function MemberForm({
   existingMember?: Member;
 }) {
   const router = useRouter();
+  const refresh = useRefresh();
   const isEdit = Boolean(existingMember);
 
   const [name, setName] = useState(existingMember?.name ?? "");
@@ -53,7 +55,7 @@ export default function MemberForm({
     const plan = plans.find((p) => p.id.toString() === newPlanId);
     if (plan && startDate) {
       setEndDate(
-        format(addMonths(new Date(startDate), plan.duration_months), "yyyy-MM-dd")
+        format(addMonths(parseISO(startDate), plan.duration_months), "yyyy-MM-dd")
       );
       if (!isEdit) {
         setAmountDue(plan.fee_amount.toString());
@@ -66,7 +68,7 @@ export default function MemberForm({
     setStartDate(newStart);
     const plan = plans.find((p) => p.id.toString() === planId);
     if (plan && newStart) {
-      setEndDate(format(addMonths(new Date(newStart), plan.duration_months), "yyyy-MM-dd"));
+      setEndDate(format(addMonths(parseISO(newStart), plan.duration_months), "yyyy-MM-dd"));
     }
   }
 
@@ -80,102 +82,40 @@ export default function MemberForm({
     }
 
     setLoading(true);
-    const supabase = createClient();
-    const plan = plans.find((p) => p.id.toString() === planId);
-    const dueAmount = amountDue ? parseFloat(amountDue) : 0;
+    const common = {
+      name: name.trim(),
+      age: age ? parseInt(age, 10) : null,
+      email: email.trim() || null,
+      phone: phone.trim() || null,
+      plan_id: planId ? parseInt(planId, 10) : null,
+      start_date: startDate,
+      end_date: endDate || null,
+      amount_due: amountDue ? parseFloat(amountDue) : 0,
+      notes: notes.trim() || null,
+    };
 
-    if (isEdit) {
-      // Edit only ever corrects details and the agreed due amount — it
-      // never touches fees_paid or logs a payment/renewal, so editing a
-      // phone number can never fabricate a transaction record.
-      const { error: dbError } = await supabase
-        .from("members")
-        .update({
-          name: name.trim(),
-          age: age ? parseInt(age, 10) : null,
-          email: email.trim() || null,
-          phone: phone.trim() || null,
-          plan_id: planId ? parseInt(planId, 10) : null,
-          plan_name: plan?.name ?? null,
-          start_date: startDate,
-          end_date: endDate || null,
-          amount_due: dueAmount,
-          notes: notes.trim() || null,
-        })
-        .eq("id", existingMember!.id);
-
-      setLoading(false);
-      if (dbError) {
-        setError(dbError.message);
-        return;
+    try {
+      if (isEdit) {
+        // Edit only ever corrects details and the agreed due amount — it never touches fees_paid or
+        // logs a payment/renewal, so editing a phone number can never fabricate a transaction record.
+        await api.members.update({ id: existingMember!.id, patch: common });
+        playChime();
+      } else {
+        // Adding a member creates the member, their first term and (if anything was paid now) the
+        // payment together, in one transaction.
+        await api.members.create({
+          ...common,
+          initial_payment: initialPayment ? parseFloat(initialPayment) : 0,
+          payment_method: method,
+        });
+        playClink();
       }
-      playChime();
-      router.push("/dashboard/members");
-      router.refresh();
-      return;
-    }
-
-    // Adding a new member: create the member, their first term (renewal),
-    // and — if anything was paid right now — the payment transaction for
-    // it, all tied together.
-    const paidNow = initialPayment ? parseFloat(initialPayment) : 0;
-
-    const { data: insertedMember, error: memberError } = await supabase
-      .from("members")
-      .insert({
-        name: name.trim(),
-        age: age ? parseInt(age, 10) : null,
-        email: email.trim() || null,
-        phone: phone.trim() || null,
-        plan_id: planId ? parseInt(planId, 10) : null,
-        plan_name: plan?.name ?? null,
-        start_date: startDate,
-        end_date: endDate || null,
-        fees_paid: paidNow,
-        amount_due: dueAmount,
-        notes: notes.trim() || null,
-      })
-      .select("id")
-      .single();
-
-    if (memberError || !insertedMember) {
+      refresh();
+      router.push("/dashboard/members/");
+    } catch (err) {
       setLoading(false);
-      setError(memberError?.message ?? "Couldn't create member.");
-      return;
+      setError(errorMessage(err));
     }
-
-    const { data: insertedRenewal, error: renewalError } = await supabase
-      .from("renewals")
-      .insert({
-        member_id: insertedMember.id,
-        plan_id: planId ? parseInt(planId, 10) : null,
-        plan_name: plan?.name ?? null,
-        amount: paidNow,
-        amount_due: dueAmount,
-        start_date: startDate,
-        end_date: endDate || null,
-      })
-      .select("id")
-      .single();
-
-    if (renewalError) {
-      console.error("Failed to log initial term:", renewalError.message);
-    } else if (paidNow > 0 && insertedRenewal) {
-      const { error: paymentError } = await supabase.from("payments").insert({
-        member_id: insertedMember.id,
-        renewal_id: insertedRenewal.id,
-        amount: paidNow,
-        method,
-      });
-      if (paymentError) {
-        console.error("Failed to log initial payment:", paymentError.message);
-      }
-    }
-
-    setLoading(false);
-    playClink();
-    router.push("/dashboard/members");
-    router.refresh();
   }
 
   const outstanding = isEdit
