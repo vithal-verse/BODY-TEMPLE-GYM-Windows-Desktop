@@ -98,7 +98,7 @@ export type AuthStatus = {
 
 export type SortDir = "asc" | "desc";
 export type MemberStatusFilter = "all" | "active" | "expired" | "paused" | "expiring";
-export type MemberSortKey = "name" | "start_date" | "end_date" | "fees_paid";
+export type MemberSortKey = "name" | "start_date" | "end_date" | "fees_paid" | "created_at";
 
 export type Page<T> = { rows: T[]; total: number; page: number; pageSize: number };
 
@@ -290,7 +290,12 @@ export type SheetsConfigInput = {
 };
 
 export type SheetsPushResult = { synced: number };
-export type SheetsPullResult = { updatedMembers: number; fieldsChanged: number; conflictsSkipped: number };
+export type SheetsPullResult = {
+  updatedMembers: number;
+  fieldsChanged: number;
+  conflictsSkipped: number; // rows changed locally since the last push (local wins)
+  invalidSkipped: number; // cell edits that failed validation
+};
 
 // ---------------------------------------------------------------------------
 // Import from Supabase
