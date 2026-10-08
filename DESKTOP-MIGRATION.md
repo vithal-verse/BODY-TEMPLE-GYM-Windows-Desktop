@@ -1,20 +1,19 @@
 # Body Temple Gym — Desktop migration
 
-Migration of the existing Next.js + Supabase + Vercel web app into an offline-first
-Windows desktop app (Electron + Next.js + React + TypeScript + SQLite).
+Migration of the existing Next.js + Supabase + Vercel web app into an offline-first Windows desktop app
+(Electron + Next.js + React + TypeScript + SQLite).
 
-> ## ⚠️ Status: Checkpoint 3 of 4 — backend + Electron shell done, UI port about half done. **The app isn't usable yet.**
+> ## Status: feature-complete. Left to do: produce the installer on Windows and try it on a real PC.
 >
 > | Phase | Scope | State |
 > |---|---|---|
-> | 1 | Architecture decisions, shared IPC contract, SQLite schema + migration runner, DB manager, logger, tests | ✅ done & tested (32 tests) |
-> | 2 | Main-process services (auth, members, attendance, revenue, backup/restore, Sheets, importer), validated IPC, secure main window, preload, esbuild bundling | ✅ done & tested (122 tests + a real-Electron smoke test) |
-> | 3 | Renderer port: replace every Supabase call with `window.gym`, auth guard + first-run setup, route changes, new Settings screens | 🔄 about half done (see §6) |
-> | 4 | electron-builder NSIS installer, icons, GitHub Actions Windows build, full test pass, final docs | ⬜ not started |
+> | 1 | Architecture, shared IPC contract, SQLite schema + migrations, DB manager, logger | ✅ |
+> | 2 | Services (auth, members, attendance, reports, backup/restore, Sheets, importer), validated IPC, hardened Electron shell | ✅ |
+> | 3 | Renderer port: every screen on `window.gym`, first-run setup, recovery, Settings | ✅ static export builds; end-to-end UI test passes |
+> | 4 | Packaging: electron-builder (NSIS), icons, GitHub Actions | ✅ configured; Windows package built from Linux; ⬜ final `.exe` from CI + real-PC check |
 >
-> Eleven UI files in `src/` still use the old data layer or old props (listed in §6), so `next build`
-> fails until they are ported.
-> `npm test` and `npm run typecheck:electron` pass today.
+> Verified by 122 automated tests, `npm run lint`, `npm run typecheck`, `npm run build`, and a 20-step end-to-end UI test in the
+> real Electron app (details in §5). Nothing has been run on Windows yet.
 
 ---
 
@@ -58,58 +57,73 @@ Layering rule: UI → (IPC) → services → database. Services never import Ele
 | D14 | Electron hardening: `contextIsolation`, `sandbox`, `nodeIntegration:false`, strict CSP, navigation locked to `app://`, new windows denied, single-instance lock, zod on every IPC payload, **no generic invoke channel**. | Spec requirement. `shared/api.ts` has a compile-time check that the allow-list covers every API method. |
 | D15 | All Next/React/Tailwind/Framer/Recharts packages are **devDependencies** (bundled into `out/` at build time). The only runtime dependency is `better-sqlite3`. | Small installer, small attack surface. |
 
+### Deliberate differences from the web app
+
+| Area | Web app | Desktop |
+|---|---|---|
+| Member status | Updated only when a row was written, so a lapsed member stayed "active" until edited | Refreshed on start, hourly, on window focus and before every read |
+| New-member form | Plan pre-selected, but end date / fee / amount paid stayed blank until the plan was re-picked (a member could be saved with no end date, so never expire) | The pre-selected plan is applied immediately |
+| Renewal | Three separate calls (term, payment, member update) | One transaction |
+| Confirmations | Browser `confirm()` / `alert()` | In-app dialogs (native ones can leave text inputs unfocusable in Electron on Windows) |
+| Sign-in | Supabase session cookie persisted | Sign in each time the app opens (the session lives only in memory) |
+| Attendance-history dates | Filtered by UTC date | Filtered by the gym's local day |
+| CSV export | Plain UTF-8 | UTF-8 with BOM (opens correctly in Excel) + spreadsheet-formula neutralisation |
+| Plans | Edited with SQL in Supabase | Settings → Plans |
+| Staff accounts | Created in the Supabase dashboard | Settings → Account (owner only) |
+| Google Sheets | Supabase webhook + Apps Script | Optional; push after changes + "Fetch edits"; local data wins on conflict |
+
 ## 3. Feature-parity checklist (derived from the original repo)
 
-Legend: ✅ in this checkpoint · ⬜ to do. "Web behaviour" is what must be reproduced.
+Legend: ✅ implemented and covered by the automated tests and/or the end-to-end UI test. Items that touch external services (Google Sheets, Supabase) were verified against fakes only. "Web behaviour" is what is reproduced.
 
 ### Auth
 | Feature | Web behaviour | Desktop plan | |
 |---|---|---|---|
-| Login | Email + password, show/hide password, error *"That email and password don't match our records."* | `auth.login`, same copy & form | ⬜ |
-| Route protection | `/dashboard/*` needs a session; `/login` bounces to dashboard if signed in; `/` redirects either way | Client guard on `auth.status` | ⬜ |
-| Sign out | Top bar | `auth.logout` | ⬜ |
-| Display name | `full_name` → email prefix → "Admin"; initials badge | Same | ⬜ |
-| Admin creation | Done in Supabase dashboard | **First-run setup screen**, change password, recovery-code reset, manage admins | ⬜ |
-| Hashing / lock-out | Supabase | scrypt + salt + progressive delay | ⬜ |
+| Login | Email + password, show/hide password, error *"That email and password don't match our records."* | `auth.login`, same copy & form | ✅ |
+| Route protection | `/dashboard/*` needs a session; `/login` bounces to dashboard if signed in; `/` redirects either way | Client guard on `auth.status` | ✅ |
+| Sign out | Top bar | `auth.logout` | ✅ |
+| Display name | `full_name` → email prefix → "Admin"; initials badge | Same | ✅ |
+| Admin creation | Done in Supabase dashboard | **First-run setup screen**, change password, recovery-code reset, manage admins | ✅ |
+| Hashing / lock-out | Supabase | scrypt + salt + progressive delay | ✅ |
 
 ### Dashboard
 | Feature | Web behaviour | |
 |---|---|---|
-| 5 stat cards (count-up) | Total · Active · Expired · Checked in today · Total revenue | ⬜ |
-| Revenue, last 6 months | Σ `fees_paid` bucketed by member `start_date` month | ⬜ |
-| Expiring soon | Active members ending today…+7 days, soonest first, top 6, red when ≤2 days, links to Renew; "View all" → `members?filter=expiring` | ⬜ |
-| Today's check-ins | Local midnight→midnight, newest first, with time | ⬜ |
+| 5 stat cards (count-up) | Total · Active · Expired · Checked in today · Total revenue | ✅ |
+| Revenue, last 6 months | Σ `fees_paid` bucketed by member `start_date` month | ✅ |
+| Expiring soon | Active members ending today…+7 days, soonest first, top 6, red when ≤2 days, links to Renew; "View all" → `members?filter=expiring` | ✅ |
+| Today's check-ins | Local midnight→midnight, newest first, with time | ✅ |
 
 ### Members
 | Feature | Web behaviour | |
 |---|---|---|
-| Search | Case-insensitive substring over name, email, phone | ⬜ |
-| Filters | All · Active · Expired · Paused · Expiring soon (= active & ends within 7 days); `?filter=` deep link | ⬜ |
-| Sort | Name (default, asc), Start, End, Fees paid; click toggles direction | ⬜ |
-| Pagination | 10 per page | ⬜ |
-| Row | Plan, dates (end red if active & ≤7 days), fees paid + "₹X due", status pill, Renew / Edit / Delete | ⬜ |
-| Delete | Confirm *"Remove {name} …can't be undone"*; cascades to attendance, renewals, payments | ⬜ |
-| Add member | Name required; age 10–100; plan auto-fills end date (start + months) and amount due; "payment collected now" + method creates member **+ first renewal + payment** | ⬜ |
-| Edit member | Corrects details and `amount_due` only — never touches `fees_paid`, never logs a payment | ⬜ |
-| Detail page | Header (initials, status, plan chip, outstanding chip, paused-since, age); tiles (email, phone, window, due/paid/outstanding); notes; payment history; renewal history with total collected; last 20 check-ins ("on floor" or duration) | ⬜ |
-| Renew | Default start = day after current end if still active, else today; creates renewal (+payment), then sets plan/dates/due, `fees_paid` = paid now, status active, clears pause — **atomically** (web app did 3 separate calls) | ⬜ |
-| Record payment | Attaches to the member's most recent renewal; `fees_paid += x`, `renewal.amount += x`; blocked with "go to Renew" if no term exists | ⬜ |
-| Pause / Resume | Pause: confirm, `paused_at = today`. Resume: `end_date += calendar days paused` | ⬜ |
+| Search | Case-insensitive substring over name, email, phone | ✅ |
+| Filters | All · Active · Expired · Paused · Expiring soon (= active & ends within 7 days); `?filter=` deep link | ✅ |
+| Sort | Name (default, asc), Start, End, Fees paid; click toggles direction | ✅ |
+| Pagination | 10 per page | ✅ |
+| Row | Plan, dates (end red if active & ≤7 days), fees paid + "₹X due", status pill, Renew / Edit / Delete | ✅ |
+| Delete | Confirm *"Remove {name} …can't be undone"*; cascades to attendance, renewals, payments | ✅ |
+| Add member | Name required; age 10–100; plan auto-fills end date (start + months) and amount due; "payment collected now" + method creates member **+ first renewal + payment** | ✅ |
+| Edit member | Corrects details and `amount_due` only — never touches `fees_paid`, never logs a payment | ✅ |
+| Detail page | Header (initials, status, plan chip, outstanding chip, paused-since, age); tiles (email, phone, window, due/paid/outstanding); notes; payment history; renewal history with total collected; last 20 check-ins ("on floor" or duration) | ✅ |
+| Renew | Default start = day after current end if still active, else today; creates renewal (+payment), then sets plan/dates/due, `fees_paid` = paid now, status active, clears pause — **atomically** (web app did 3 separate calls) | ✅ |
+| Record payment | Attaches to the member's most recent renewal; `fees_paid += x`, `renewal.amount += x`; blocked with "go to Renew" if no term exists | ✅ |
+| Pause / Resume | Pause: confirm, `paused_at = today`. Resume: `end_date += calendar days paused` | ✅ |
 
 ### Attendance
 | Feature | Web behaviour | |
 |---|---|---|
-| Check-in tab | Autofocused search (name/email/phone, top 8); expired/paused shows warning but still allowed; duplicate active session blocked by DB; check-out stores `duration_minutes = round(Δ/60000)` | ⬜ |
-| Overview tab | Today's check-ins · Currently in · Checked out today · Avg visit today; daily(14d)/weekly(8w)/monthly(6m) bars; "On the floor now" (open sessions of **any** day) | ⬜ (bucketing ✅ in `shared/trends.ts`) |
-| History tab | All visits newest first; filter by name + from/to date; 20 per page | ⬜ |
+| Check-in tab | Autofocused search (name/email/phone, top 8); expired/paused shows warning but still allowed; duplicate active session blocked by DB; check-out stores `duration_minutes = round(Δ/60000)` | ✅ |
+| Overview tab | Today's check-ins · Currently in · Checked out today · Avg visit today; daily(14d)/weekly(8w)/monthly(6m) bars; "On the floor now" (open sessions of **any** day) | ✅ (bucketing ✅ in `shared/trends.ts`) |
+| History tab | All visits newest first; filter by name + from/to date; 20 per page | ✅ |
 
 ### Revenue & export
 | Feature | Web behaviour | |
 |---|---|---|
-| Date presets | Today · This week (from Sunday) · This month · Last 3 months · Custom | ⬜ |
-| Cards | Total revenue · Payments · Average · Pending dues (Σ max(0, due−paid) over members) | ⬜ |
-| Trend / by-method / transactions | Trend ignores the filter; method % bars; table with search, method filter, sort (date/amount), 15/page, CSV of the filtered rows | ⬜ |
-| Members CSV | 11 columns, `body-temple-gym-members-YYYY-MM-DD.csv`, 5-row preview | ⬜ (CSV helpers ✅; desktop uses a native Save dialog) |
+| Date presets | Today · This week (from Sunday) · This month · Last 3 months · Custom | ✅ |
+| Cards | Total revenue · Payments · Average · Pending dues (Σ max(0, due−paid) over members) | ✅ |
+| Trend / by-method / transactions | Trend ignores the filter; method % bars; table with search, method filter, sort (date/amount), 15/page, CSV of the filtered rows | ✅ |
+| Members CSV | 11 columns, `body-temple-gym-members-YYYY-MM-DD.csv`, 5-row preview | ✅ (CSV helpers ✅; desktop uses a native Save dialog) |
 
 ### Extras preserved
 Sound effects + mute toggle · particle-network background · Framer Motion page transitions ·
@@ -118,8 +132,8 @@ Geist Sans · mobile/narrow layout · `reducedMotion="user"` · mango/ink theme.
 ### Google Sheets
 | Web | Desktop | |
 |---|---|---|
-| Supabase webhook → `/api/sheet-sync/push` rewrites `Members!A:K` (id,name,age,email,phone,plan_name,start_date,end_date,fees_paid,status,updated_at) | `sheets.push` (auto after changes if enabled + manual) | ⬜ |
-| Apps Script `onEdit` → `/api/sheet-sync/pull` `{id,field,value}`; editable: name, age, email, phone, plan_name, start_date, end_date, fees_paid, status | `sheets.pull` reads the sheet; applies those fields where the sheet changed and the local row has **not** changed since the last push (local wins on conflict, counted in the result) | ⬜ |
+| Supabase webhook → `/api/sheet-sync/push` rewrites `Members!A:K` (id,name,age,email,phone,plan_name,start_date,end_date,fees_paid,status,updated_at) | `sheets.push` (auto after changes if enabled + manual) | ✅ |
+| Apps Script `onEdit` → `/api/sheet-sync/pull` `{id,field,value}`; editable: name, age, email, phone, plan_name, start_date, end_date, fees_paid, status | `sheets.pull` reads the sheet; applies those fields where the sheet changed and the local row has **not** changed since the last push (local wins on conflict, counted in the result) | ✅ |
 
 ### New for desktop (required by the brief)
 Backup now · Export backup (save dialog) · Restore (confirm) · Backup verification · Auto backups ·
@@ -135,68 +149,62 @@ Import from Supabase (live API or exported CSV/JSON folder) · log viewer shortc
 | `src/app/dashboard/members/[id]/{page,edit,renew,pay}` | removed → `legacy/web-app/`; become query-param routes (D8) |
 | `src/types/database.ts` | replaced by `shared/types.ts` ✅ |
 | `src/lib/revenue-trend.ts` (+ trend half of `attendance.ts`) | `shared/trends.ts` ✅ |
-| `src/lib/{members,plans,attendance,payments,renewals}.ts` | ⬜ thin `window.gym` client; SQL moves into `electron/services/*` |
+| `src/lib/{members,plans,attendance,payments,renewals}.ts` | ✅ thin `window.gym` client; SQL moves into `electron/services/*` |
 | `src/lib/{utils,sounds,use-count-up,date-ranges}.ts` | unchanged |
-| `src/app/{page,login/*}`, `dashboard/layout.tsx`, `top-bar.tsx` | ⬜ session via IPC |
-| other `src/app/dashboard/**/page.tsx` | ⬜ server components → client components that load via IPC |
-| components calling `createClient()` (member-form, renew-form, record-payment-form, pause-resume-action, check-in-panel, members-table, login-form, top-bar) | ⬜ swap Supabase calls for `window.gym` calls; markup/classes untouched |
+| `src/app/{page,login/*}`, `dashboard/layout.tsx`, `top-bar.tsx` | ✅ session via IPC |
+| other `src/app/dashboard/**/page.tsx` | ✅ server components → client components that load via IPC |
+| components calling `createClient()` (member-form, renew-form, record-payment-form, pause-resume-action, check-in-panel, members-table, login-form, top-bar) | ✅ swap Supabase calls for `window.gym` calls; markup/classes untouched |
 | `supabase/*.sql` | moved to `legacy/supabase/` ✅ |
 
-## 5. What exists in this checkpoint
+## 5. What exists and what was verified
 
 ```
-shared/      domain types · IPC contract + allow-list (api.ts) · errors · money · csv · trends · status · validation
+shared/      domain types · IPC contract + allow-list · errors · money · csv · trends · status · validation
 electron/
-  database/  connection · versioned migrations · integrity checks · manager (open / close / checkpoint)
+  database/  connection · versioned migrations · integrity checks · manager
   services/  auth · plans · members · attendance · reports (dashboard, revenue, CSV) · backup & restore
              sheets · importer · settings · logger · platform interface
-  ipc/       zod schemas + one handler per API method · dispatcher (access control) · error translation
-  main/      paths · app:// protocol (+ CSP) · hardened window & menu · native dialogs / secret storage · entry
+  ipc/       zod schemas + one handler per API method · dispatcher (access control) · error translation · registration
+  main/      paths · app:// protocol (+ CSP) · hardened window & menu · native dialogs / secret storage · entry point
   preload/   the window.gym bridge (generated from the allow-list)
-scripts/     build-electron.mjs (esbuild → dist-electron/)
+src/         the UI: original screens on window.gym, plus setup / recovery / Settings
+scripts/     build-electron.mjs · dev.mjs · ui-test.mjs · make-icons.py
 tests/       122 tests in 10 files
-src/         UI — ported parts listed in §6
+build/       icon.ico / icon.png          electron-builder.yml          .github/workflows/{ci,build-windows}.yml
 legacy/      original Supabase SQL + removed web files (reference only)
 ```
 
-Verified here (Linux sandbox):
-- **122 automated tests**: schema + constraints, migration rollback, auth (hashing, lock-out, recovery code, roles),
-  members (create / edit / renew / pause / payment / status expiry / search / sort / pagination), attendance,
-  dashboard + revenue figures, CSV export, backup & restore (online backup under concurrent writes, rollback on a
-  failed swap, older-schema migration), Google Sheets sync against a fake Google (JWT signature, push, pull, conflicts),
-  Supabase import (exact money, id preservation, orphan skipping, paging, error cases), and the IPC pipeline
-  (allow-list is exhaustive, access levels frozen, untrusted senders blocked, injection-style input rejected).
-- **A real Electron run** (Electron 44 under Xvfb): boots, creates its data folders and database, serves the page over
-  `app://` with a CSP header, exposes only the allow-listed `window.gym` (no `require` / `process` / `Buffer`), enforces login
-  and validation over real IPC, returns 404 for path traversal, blocks outbound `fetch`, and shuts down cleanly.
+**Verified here (Linux sandbox)**
+- **122 automated tests**: schema + constraints, migration rollback, auth (hashing, lock-out, recovery code, roles), members
+  (create / edit / renew / pause / payment / status expiry / search / sort / pagination), attendance, dashboard + revenue figures,
+  CSV export, backup & restore (online backup under concurrent writes, rollback on a failed swap, older-schema migration),
+  Google Sheets against a fake Google (JWT signature, push, pull, conflicts), Supabase import (exact money, id preservation,
+  orphan skipping, paging, errors), and the IPC pipeline (allow-list exhaustive, access levels frozen, untrusted senders blocked,
+  injection-style input rejected).
+- `npm run lint` (clean) · `npm run typecheck` (renderer + Electron, clean) · `npm run build` (18 static routes + Electron bundles).
+- **End-to-end UI test** (`npm run test:ui`, real Electron, 20 steps): first-run setup (weak-password and mismatch checks, recovery
+  code), add / edit / search / filter / sort / paginate members, record a payment, renew, pause / resume, check-in / check-out with
+  overview and history, revenue totals, CSV export, plans, backup → verify → restore (session ends, data returns to the backup),
+  password change, signed-out guard, wrong-password refusal, and persistence across an app restart.
+- The **same UI test also passes when the app runs from a packed `app.asar`** with the native SQLite binary unpacked beside it — the
+  layout the installed app uses — which proves the `app://` page loader and the database driver work from inside the archive.
+- **Windows package built from Linux** with electron-builder: a real `Body Temple Gym.exe` (PE32+ x86-64); a 5 MB app archive holding
+  only the UI, the main/preload scripts and better-sqlite3, with the `win32-x64` native binary unpacked beside it; the NSIS script
+  compiled and produced the installer stub.
 
-**Not verified (cannot be, from this sandbox):** any Windows build, the installer, the ported screens in a running app,
-an in-place update on a real PC, Google Sheets against real Google, or a Supabase import against a real project.
+**Not verified (cannot be, from this sandbox)**
+- Running on Windows at all; the finished `BodyTempleGym-Setup.exe` (its last step, writing the uninstaller, needs Wine or Windows —
+  the GitHub workflow does it natively); installing over an older version; Google Sheets against real Google; a Supabase import
+  against a real project.
 
-## 6. Remaining work
+## 6. Remaining work (short)
 
-### Phase 3 — renderer (about half done)
-
-**Done:** `src/lib/{api,use-async}.ts`; `components/{session-provider,dialog-provider,page-state,ui,auth-shell}.tsx`;
-screens: root redirect, login (+ password recovery), first-run setup with recovery code, dashboard shell and overview,
-member add / detail / edit / renew / pay (now query-param routes, e.g. `/dashboard/members/detail?id=…`), the four forms
-(member, renew, payment, pause/resume), top bar (sign out), sidebar (Settings entry). All compile cleanly.
-
-**Still on the old data layer / props** (these are the only files stopping `next build`):
-- `components/members-table.tsx` → server-side search / filter / sort / pagination via `api.members.list`; delete via `api.members.remove`
-- `components/check-in-panel.tsx` → `api.members.search`, `api.attendance.checkIn` / `checkOut`
-- `components/attendance-manager.tsx`, `attendance-overview.tsx`, `attendance-history.tsx` (+ the type import in `attendance-trend-chart.tsx`) → `api.attendance.*`, history paged on the server
-- `components/export-panel.tsx` → `api.exports.members()` (native Save dialog); preview via `api.members.list({ pageSize: 5, sortKey: "created_at" })`
-- `components/revenue-dashboard.tsx`, `revenue-trend-chart.tsx`, `revenue-method-breakdown.tsx`, `revenue-transactions-table.tsx` → `api.revenue.report` / `trend`, `api.exports.revenue`
-- `app/dashboard/settings/page.tsx` (new): Plans · Data safety (backup / restore / auto-backup / integrity) · Google Sheets · Import · Account (password, admins, logs). The sidebar and the File menu already link to it.
-
-Then: add the `build:renderer` / `dev` / `start` scripts, run lint + a full `next build`, and walk the §3 checklist against the original screens.
-
-### Phase 4 — Windows
-`electron-builder` (NSIS, x64, `perMachine:false`, `deleteAppDataOnUninstall:false`, artifact `BodyTempleGym-Setup.exe`,
-`npmRebuild:false` + `asarUnpack` for `better-sqlite3`), `.ico` generated from `public/brand/logo-512.png`,
-`.github/workflows/build-windows.yml` (`windows-latest`), update-in-place test (install v1 → add data → install v2 → data intact),
-final README pass.
+1. Run the **Build Windows installer** workflow (Actions tab) or `npm run dist:win` on a Windows PC; install the result on a real PC.
+2. On that PC, click through the §3 checklist once (the UI test already does this on Linux), including *install over an older
+   version keeps the database* and *uninstall keeps `%APPDATA%\Body Temple Gym`*.
+3. Try **Settings → Import** with real Supabase exports (start with the folder option) and **Settings → Google Sheets** with a real
+   service account.
+4. Optional: a code-signing certificate (removes the SmartScreen "Unknown publisher" prompt); an auto-updater.
 
 ## 7. Known limitations to expect
 
@@ -213,8 +221,8 @@ final README pass.
 
 ```bash
 npm install --ignore-scripts   # avoids an unnecessary node-gyp compile of better-sqlite3 (see README)
-npm test                       # 122 tests
-npm run typecheck:electron
-npm run build:electron         # bundles the Electron main + preload scripts into dist-electron/
+npm run setup:electron         # one-time Electron download
+npm run dev                    # hot-reloading app, data in ./.dev-data
+npm test && npm run lint && npm run typecheck
+npm run build && npm run test:ui
 ```
-Then finish Phase 3 from the list in §6, keeping `npm test` green.
