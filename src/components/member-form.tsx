@@ -35,16 +35,21 @@ export default function MemberForm({
   const [planId, setPlanId] = useState<string>(
     existingMember?.plan_id?.toString() ?? (plans[0]?.id.toString() ?? "")
   );
-  const [startDate, setStartDate] = useState(
-    existingMember?.start_date ?? format(new Date(), "yyyy-MM-dd")
+  const today = format(new Date(), "yyyy-MM-dd");
+  // A new member opens with the pre-selected plan already applied (end date, fee due, amount paid),
+  // so saving without re-picking the plan can't leave a membership with no end date.
+  const startingPlan = existingMember ? undefined : plans[0];
+  const [startDate, setStartDate] = useState(existingMember?.start_date ?? today);
+  const [endDate, setEndDate] = useState(
+    existingMember?.end_date ??
+      (startingPlan ? format(addMonths(parseISO(today), startingPlan.duration_months), "yyyy-MM-dd") : "")
   );
-  const [endDate, setEndDate] = useState(existingMember?.end_date ?? "");
   const [amountDue, setAmountDue] = useState(
-    existingMember?.amount_due?.toString() ?? ""
+    existingMember?.amount_due?.toString() ?? startingPlan?.fee_amount.toString() ?? ""
   );
   // Only used when adding a new member — the initial payment collected
   // right now. Edit never touches payments; see the note above the form.
-  const [initialPayment, setInitialPayment] = useState("");
+  const [initialPayment, setInitialPayment] = useState(startingPlan?.fee_amount.toString() ?? "");
   const [method, setMethod] = useState<PaymentMethod>("cash");
   const [notes, setNotes] = useState(existingMember?.notes ?? "");
   const [error, setError] = useState<string | null>(null);

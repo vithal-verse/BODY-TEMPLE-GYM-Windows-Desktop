@@ -40,7 +40,7 @@ function RecordPayment() {
       </div>
 
       <div className="max-w-xl border-2 border-ink-line bg-ink-raised p-6 sm:p-8">
-        <RecordPaymentForm member={member} currentRenewal={currentRenewal} />
+        <RecordPaymentForm member={member} />
       </div>
     </div>
   );

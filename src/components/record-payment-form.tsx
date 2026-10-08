@@ -7,7 +7,7 @@ import { api, errorMessage } from "@/lib/api";
 import { useRefresh } from "@/components/session-provider";
 import { playChime } from "@/lib/sounds";
 import { formatCurrency, cn } from "@/lib/utils";
-import type { Member, Renewal, PaymentMethod } from "@/types/database";
+import type { Member, PaymentMethod } from "@/types/database";
 
 const PAYMENT_METHODS: { value: PaymentMethod; label: string; icon: typeof Banknote }[] = [
   { value: "cash", label: "Cash", icon: Banknote },
@@ -16,13 +16,7 @@ const PAYMENT_METHODS: { value: PaymentMethod; label: string; icon: typeof Bankn
   { value: "other", label: "Other", icon: MoreHorizontal },
 ];
 
-export default function RecordPaymentForm({
-  member,
-  currentRenewal,
-}: {
-  member: Member;
-  currentRenewal: Renewal;
-}) {
+export default function RecordPaymentForm({ member }: { member: Member }) {
   const router = useRouter();
   const refresh = useRefresh();
   const outstanding = Math.max(0, member.amount_due - member.fees_paid);

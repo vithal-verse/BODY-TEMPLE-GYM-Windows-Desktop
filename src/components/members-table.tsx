@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import {
   Search,
   ArrowUpDown,
@@ -15,16 +15,22 @@ import {
 import type { Member } from "@/types/database";
 import { formatCurrency, formatDate, daysUntil, cn } from "@/lib/utils";
 import StatusPill from "@/components/status-pill";
-import { createClient } from "@/lib/supabase/client";
+import { api, errorMessage } from "@/lib/api";
+import { useAsync } from "@/lib/use-async";
+import { useDebounced } from "@/lib/use-debounced";
+import { useDialog } from "@/components/dialog-provider";
+import { useRefresh } from "@/components/session-provider";
+import { PageState } from "@/components/page-state";
 
 type SortKey = "name" | "start_date" | "end_date" | "fees_paid";
 type SortDir = "asc" | "desc";
 
 const PAGE_SIZE = 10;
 
-export default function MembersTable({ members }: { members: Member[] }) {
-  const router = useRouter();
+export default function MembersTable() {
   const searchParams = useSearchParams();
+  const dialog = useDialog();
+  const refresh = useRefresh();
   const initialFilter =
     (searchParams.get("filter") as
       | "all"
@@ -41,59 +47,15 @@ export default function MembersTable({ members }: { members: Member[] }) {
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [page, setPage] = useState(1);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [localMembers, setLocalMembers] = useState(members);
+  const debouncedQuery = useDebounced(query, 250);
 
-  const filtered = useMemo(() => {
-    let result = localMembers;
-
-    if (
-      statusFilter === "active" ||
-      statusFilter === "expired" ||
-      statusFilter === "paused"
-    ) {
-      result = result.filter((m) => m.status === statusFilter);
-    } else if (statusFilter === "expiring") {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const cutoff = new Date(today);
-      cutoff.setDate(cutoff.getDate() + 7);
-      result = result.filter((m) => {
-        if (!m.end_date || m.status !== "active") return false;
-        const end = new Date(m.end_date);
-        return end >= today && end <= cutoff;
-      });
-    }
-
-    if (query.trim()) {
-      const q = query.toLowerCase();
-      result = result.filter(
-        (m) =>
-          m.name.toLowerCase().includes(q) ||
-          m.email?.toLowerCase().includes(q) ||
-          m.phone?.toLowerCase().includes(q)
-      );
-    }
-
-    result = [...result].sort((a, b) => {
-      let cmp = 0;
-      if (sortKey === "name") cmp = a.name.localeCompare(b.name);
-      else if (sortKey === "fees_paid") cmp = a.fees_paid - b.fees_paid;
-      else {
-        const aVal = a[sortKey] ? new Date(a[sortKey]!).getTime() : 0;
-        const bVal = b[sortKey] ? new Date(b[sortKey]!).getTime() : 0;
-        cmp = aVal - bVal;
-      }
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-
-    return result;
-  }, [localMembers, statusFilter, query, sortKey, sortDir]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paginated = filtered.slice(
-    (page - 1) * PAGE_SIZE,
-    page * PAGE_SIZE
+  // Search, filter, sort and paging all happen in the database, so this stays fast with thousands of members.
+  const { data, error } = useAsync(
+    () => api.members.list({ query: debouncedQuery, status: statusFilter, sortKey, sortDir, page, pageSize: PAGE_SIZE }),
+    [debouncedQuery, statusFilter, sortKey, sortDir, page]
   );
+  const paginated = data?.rows ?? [];
+  const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / PAGE_SIZE));
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) {
@@ -106,22 +68,26 @@ export default function MembersTable({ members }: { members: Member[] }) {
   }
 
   async function handleDelete(id: string, name: string) {
-    if (!confirm(`Remove ${name} from the member list? This can't be undone.`))
-      return;
+    const ok = await dialog.confirm(`Remove ${name} from the member list? This can't be undone.`, {
+      title: "Remove member",
+      confirmLabel: "Remove",
+      danger: true,
+    });
+    if (!ok) return;
 
     setDeletingId(id);
-    const supabase = createClient();
-    const { error } = await supabase.from("members").delete().eq("id", id);
-    setDeletingId(null);
-
-    if (error) {
-      alert(`Couldn't delete member: ${error.message}`);
-      return;
+    try {
+      await api.members.remove({ id });
+      if (paginated.length === 1 && page > 1) setPage(page - 1);
+      refresh();
+    } catch (err) {
+      await dialog.alert(`Couldn't delete member: ${errorMessage(err)}`);
+    } finally {
+      setDeletingId(null);
     }
-
-    setLocalMembers((prev) => prev.filter((m) => m.id !== id));
-    router.refresh();
   }
+
+  if (!data) return <PageState error={error} />;
 
   const FILTERS: { key: typeof statusFilter; label: string }[] = [
     { key: "all", label: "All" },
@@ -289,7 +255,7 @@ function MemberRow({
     <tr className="border-b border-ink-line last:border-b-0 hover:bg-ink-raised">
       <td className="px-4 py-3">
         <Link
-          href={`/dashboard/members/${member.id}`}
+          href={`/dashboard/members/detail?id=${member.id}`}
           className="font-body text-sm font-medium text-paper hover:text-mango"
         >
           {member.name}
@@ -323,14 +289,14 @@ function MemberRow({
       <td className="px-4 py-3">
         <div className="flex items-center justify-end gap-2">
           <Link
-            href={`/dashboard/members/${member.id}/renew`}
+            href={`/dashboard/members/renew?id=${member.id}`}
             className="flex h-8 w-8 items-center justify-center border-2 border-ink-line text-paper/50 transition-colors hover:border-mango hover:text-mango"
             aria-label={`Renew ${member.name}`}
           >
             <RotateCw className="h-3.5 w-3.5" />
           </Link>
           <Link
-            href={`/dashboard/members/${member.id}/edit`}
+            href={`/dashboard/members/edit?id=${member.id}`}
             className="flex h-8 w-8 items-center justify-center border-2 border-ink-line text-paper/50 transition-colors hover:border-mango hover:text-mango"
             aria-label={`Edit ${member.name}`}
           >
