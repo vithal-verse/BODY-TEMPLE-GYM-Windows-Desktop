@@ -124,7 +124,7 @@ describe("logging", () => {
       password: "hunter2",
       nested: { serviceKey: "k", privateKey: "-----BEGIN", ok: 1 },
       list: [{ recoveryCode: "AAAA-BBBB" }],
-    }) as Record<string, any>;
+    }) as { email: string; password: string; nested: { serviceKey: string; privateKey: string; ok: number }; list: { recoveryCode: string }[] };
     expect(out.email).toBe("a@b.com");
     expect(out.password).toBe("[REDACTED]");
     expect(out.nested.serviceKey).toBe("[REDACTED]");

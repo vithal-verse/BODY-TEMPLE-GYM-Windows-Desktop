@@ -233,7 +233,10 @@ export class SheetsService {
         const patch: ExternalPatch = {};
         const bad = () => void out.invalidSkipped++;
         const nameV = str(row[1]);
-        if (nameV !== m.name) nameV ? (patch.name = nameV) : bad();
+        if (nameV !== m.name) {
+          if (nameV) patch.name = nameV;
+          else bad();
+        }
         const ageS = str(row[2]);
         const age = ageS === "" ? null : Number(ageS);
         if (age !== null && !(Number.isInteger(age) && age >= 1 && age <= 120)) bad();
@@ -243,14 +246,23 @@ export class SheetsService {
           if (v !== (m[key] ?? null)) patch[key] = v;
         }
         const startV = str(row[6]);
-        if (startV !== m.start_date) isDateStr(startV) ? (patch.start_date = startV) : bad();
+        if (startV !== m.start_date) {
+          if (isDateStr(startV)) patch.start_date = startV;
+          else bad();
+        }
         const endV = str(row[7]) || null;
-        if (endV !== (m.end_date ?? null)) endV === null || isDateStr(endV) ? (patch.end_date = endV) : bad();
+        if (endV !== (m.end_date ?? null)) {
+          if (endV === null || isDateStr(endV)) patch.end_date = endV;
+          else bad();
+        }
         const paid = Number(str(row[8]) || "0");
         if (!Number.isFinite(paid) || paid < 0) bad();
         else if (toPaise(paid) !== toPaise(m.fees_paid)) patch.fees_paid = paid;
         const status = str(row[9]);
-        if (status !== m.status) (MEMBER_STATUS_VALUES as readonly string[]).includes(status) ? (patch.status = status as MemberStatus) : bad();
+        if (status !== m.status) {
+          if ((MEMBER_STATUS_VALUES as readonly string[]).includes(status)) patch.status = status as MemberStatus;
+          else bad();
+        }
 
         const keys = Object.keys(patch);
         if (keys.length) {
