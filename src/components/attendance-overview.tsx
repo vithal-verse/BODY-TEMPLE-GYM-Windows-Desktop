@@ -6,7 +6,7 @@ import type {
   AttendanceStats,
   AttendanceTrendGranularity,
   AttendanceTrendPoint,
-} from "@/lib/attendance";
+} from "@/types/database";
 import { formatDuration } from "@/lib/utils";
 import AttendanceTrendChart from "@/components/attendance-trend-chart";
 

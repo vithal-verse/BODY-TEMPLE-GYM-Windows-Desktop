@@ -11,7 +11,7 @@ import {
   CartesianGrid,
 } from "recharts";
 import { cn } from "@/lib/utils";
-import type { AttendanceTrendGranularity, AttendanceTrendPoint } from "@/lib/attendance";
+import type { AttendanceTrendGranularity, AttendanceTrendPoint } from "@/types/database";
 
 const OPTIONS: { key: AttendanceTrendGranularity; label: string }[] = [
   { key: "daily", label: "Daily" },

@@ -1,22 +1,27 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, Check, LogOut, Loader2, AlertTriangle } from "lucide-react";
 import type { Member, Attendance } from "@/types/database";
 import { cn } from "@/lib/utils";
-import { createClient } from "@/lib/supabase/client";
+import { api, ApiError, errorMessage } from "@/lib/api";
+import { useAsync } from "@/lib/use-async";
+import { useDebounced } from "@/lib/use-debounced";
+import { useDialog } from "@/components/dialog-provider";
+import { useRefresh } from "@/components/session-provider";
 import { playTick } from "@/lib/sounds";
 import StatusPill from "@/components/status-pill";
 
 export default function CheckInPanel({
-  members,
   activeSessions,
 }: {
-  members: Member[];
   activeSessions: { member: Member; session: Attendance }[];
 }) {
+  const dialog = useDialog();
+  const refresh = useRefresh();
   const [query, setQuery] = useState("");
+  const debounced = useDebounced(query, 200);
   // memberId -> their open session, if any. This is the "active check-in"
   // this feature is about — not "checked in today", since a member can
   // check in, check out, and check in again later the same day.
@@ -30,83 +35,55 @@ export default function CheckInPanel({
     inputRef.current?.focus();
   }, []);
 
-  const results = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return [];
-    return members
-      .filter(
-        (m) =>
-          m.name.toLowerCase().includes(q) ||
-          m.email?.toLowerCase().includes(q) ||
-          m.phone?.toLowerCase().includes(q)
-      )
-      .slice(0, 8);
-  }, [query, members]);
+  // Top 8 matches on name / email / phone, looked up in the database as you type.
+  const search = useAsync(
+    () => (debounced.trim() ? api.members.search({ query: debounced, limit: 8 }) : Promise.resolve([] as Member[])),
+    [debounced]
+  );
+  const results = search.data ?? [];
+  const searching = query.trim() !== "" && (search.loading || debounced !== query);
 
   async function handleCheckIn(member: Member) {
     setBusyId(member.id);
-    const supabase = createClient();
-    const { data, error } = await supabase
-      .from("attendance")
-      .insert({ member_id: member.id })
-      .select("*")
-      .single();
-
-    setBusyId(null);
-
-    if (error) {
-      if (error.code === "23505") {
-        // The unique index caught a race — they already have an active
-        // session (checked in from another tab/device since this page
-        // loaded). Refresh so the UI catches up to reality.
-        alert(`${member.name} already has an active check-in — refreshing.`);
-        window.location.reload();
-        return;
+    try {
+      const session = await api.attendance.checkIn({ memberId: member.id });
+      playTick();
+      setActiveByMember((prev) => new Map(prev).set(member.id, session));
+      setQuery("");
+      refresh();
+    } catch (err) {
+      if (err instanceof ApiError && err.code === "ALREADY_CHECKED_IN") {
+        // The database refused a second open visit (e.g. checked in a moment ago). Catch the screen up to reality.
+        await dialog.alert(`${member.name} already has an active check-in — refreshing.`);
+        const active = await api.attendance.active().catch(() => []);
+        setActiveByMember(new Map(active.map((a) => [a.member.id, a.session])));
+      } else {
+        await dialog.alert(`Couldn't check in ${member.name}: ${errorMessage(err)}`);
       }
-      alert(`Couldn't check in ${member.name}: ${error.message}`);
-      return;
+    } finally {
+      setBusyId(null);
+      inputRef.current?.focus();
     }
-
-    playTick();
-    setActiveByMember((prev) => new Map(prev).set(member.id, data));
-    setQuery("");
-    inputRef.current?.focus();
   }
 
   async function handleCheckOut(member: Member, session: Attendance) {
     setBusyId(member.id);
-    const supabase = createClient();
-    const checkedOutAt = new Date();
-    const durationMinutes = Math.max(
-      0,
-      Math.round(
-        (checkedOutAt.getTime() - new Date(session.checked_in_at).getTime()) / 60000
-      )
-    );
-
-    const { error } = await supabase
-      .from("attendance")
-      .update({
-        checked_out_at: checkedOutAt.toISOString(),
-        duration_minutes: durationMinutes,
-      })
-      .eq("id", session.id);
-
-    setBusyId(null);
-
-    if (error) {
-      alert(`Couldn't check out ${member.name}: ${error.message}`);
-      return;
+    try {
+      await api.attendance.checkOut({ sessionId: session.id });
+      playTick();
+      setActiveByMember((prev) => {
+        const next = new Map(prev);
+        next.delete(member.id);
+        return next;
+      });
+      setQuery("");
+      refresh();
+    } catch (err) {
+      await dialog.alert(`Couldn't check out ${member.name}: ${errorMessage(err)}`);
+    } finally {
+      setBusyId(null);
+      inputRef.current?.focus();
     }
-
-    playTick();
-    setActiveByMember((prev) => {
-      const next = new Map(prev);
-      next.delete(member.id);
-      return next;
-    });
-    setQuery("");
-    inputRef.current?.focus();
   }
 
   return (
@@ -127,6 +104,10 @@ export default function CheckInPanel({
           <p className="font-body text-sm text-paper/35">
             Start typing to find someone.
           </p>
+        </div>
+      ) : searching && results.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-ink-line py-16 text-center">
+          <p className="font-body text-sm text-paper/35">Searching…</p>
         </div>
       ) : results.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-ink-line py-16 text-center">

@@ -1,36 +1,39 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Search } from "lucide-react";
-import type { Member, Attendance } from "@/types/database";
 import { formatDuration } from "@/lib/utils";
 import StatusPill from "@/components/status-pill";
+import { api } from "@/lib/api";
+import { useAsync } from "@/lib/use-async";
+import { useDebounced } from "@/lib/use-debounced";
+import { PageState } from "@/components/page-state";
 
 const PAGE_SIZE = 20;
 
-export default function AttendanceHistory({
-  history,
-}: {
-  history: { member: Member; session: Attendance }[];
-}) {
+export default function AttendanceHistory() {
   const [query, setQuery] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [page, setPage] = useState(1);
+  const debouncedQuery = useDebounced(query, 250);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return history.filter(({ member, session }) => {
-      if (q && !member.name.toLowerCase().includes(q)) return false;
-      const checkInDate = session.checked_in_at.slice(0, 10);
-      if (startDate && checkInDate < startDate) return false;
-      if (endDate && checkInDate > endDate) return false;
-      return true;
-    });
-  }, [history, query, startDate, endDate]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  // Filtering by name and (local) date range, plus paging, is done by the database.
+  const { data, error } = useAsync(
+    () =>
+      api.attendance.history({
+        query: debouncedQuery,
+        startDate: startDate || undefined,
+        endDate: endDate || undefined,
+        page,
+        pageSize: PAGE_SIZE,
+      }),
+    [debouncedQuery, startDate, endDate, page]
+  );
+  if (!data) return <PageState error={error} />;
+  const total = data.total;
+  const paginated = data.rows;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div className="flex flex-col gap-4">
@@ -94,7 +97,7 @@ export default function AttendanceHistory({
       </div>
 
       <p className="font-body text-xs text-paper/40">
-        {filtered.length} {filtered.length === 1 ? "visit" : "visits"} found.
+        {total} {total === 1 ? "visit" : "visits"} found.
       </p>
 
       {paginated.length === 0 ? (

@@ -3,12 +3,9 @@
 import { useState } from "react";
 import { ClipboardCheck, LayoutGrid, History } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { Member, Attendance } from "@/types/database";
-import type {
-  AttendanceStats,
-  AttendanceTrendGranularity,
-  AttendanceTrendPoint,
-} from "@/lib/attendance";
+import { api } from "@/lib/api";
+import { useAsync } from "@/lib/use-async";
+import { PageState } from "@/components/page-state";
 import CheckInPanel from "@/components/check-in-panel";
 import AttendanceOverview from "@/components/attendance-overview";
 import AttendanceHistory from "@/components/attendance-history";
@@ -21,22 +18,13 @@ const TABS: { key: Tab; label: string; icon: typeof ClipboardCheck }[] = [
   { key: "history", label: "History", icon: History },
 ];
 
-export default function AttendanceManager({
-  members,
-  activeSessions,
-  stats,
-  trend,
-  currentlyCheckedIn,
-  history,
-}: {
-  members: Member[];
-  activeSessions: { member: Member; session: Attendance }[];
-  stats: AttendanceStats;
-  trend: Record<AttendanceTrendGranularity, AttendanceTrendPoint[]>;
-  currentlyCheckedIn: { member: Member; session: Attendance }[];
-  history: { member: Member; session: Attendance }[];
-}) {
+export default function AttendanceManager() {
   const [tab, setTab] = useState<Tab>("check-in");
+  const { data, error } = useAsync(async () => {
+    const [active, stats, trend] = await Promise.all([api.attendance.active(), api.attendance.stats(), api.attendance.trend()]);
+    return { active, stats, trend };
+  }, []);
+  if (!data) return <PageState error={error} />;
 
   return (
     <div className="flex flex-col gap-6">
@@ -58,17 +46,11 @@ export default function AttendanceManager({
         ))}
       </div>
 
-      {tab === "check-in" && (
-        <CheckInPanel members={members} activeSessions={activeSessions} />
-      )}
+      {tab === "check-in" && <CheckInPanel activeSessions={data.active} />}
       {tab === "overview" && (
-        <AttendanceOverview
-          stats={stats}
-          trend={trend}
-          currentlyCheckedIn={currentlyCheckedIn}
-        />
+        <AttendanceOverview stats={data.stats} trend={data.trend} currentlyCheckedIn={data.active} />
       )}
-      {tab === "history" && <AttendanceHistory history={history} />}
+      {tab === "history" && <AttendanceHistory />}
     </div>
   );
 }
