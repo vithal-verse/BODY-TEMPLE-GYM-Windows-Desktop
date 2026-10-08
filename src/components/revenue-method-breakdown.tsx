@@ -2,7 +2,6 @@
 
 import { Banknote, Smartphone, CreditCard, MoreHorizontal } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
-import type { PaymentWithMember } from "@/lib/payments";
 import type { PaymentMethod } from "@/types/database";
 
 const METHOD_META: Record<PaymentMethod, { label: string; icon: typeof Banknote }> = {
@@ -13,15 +12,13 @@ const METHOD_META: Record<PaymentMethod, { label: string; icon: typeof Banknote 
 };
 
 export default function RevenueMethodBreakdown({
-  payments,
+  byMethod,
 }: {
-  payments: PaymentWithMember[];
+  /** Revenue per payment method for the selected date range (computed by the database). */
+  byMethod: Record<PaymentMethod, number>;
 }) {
-  const totals: Record<PaymentMethod, number> = { cash: 0, upi: 0, card: 0, other: 0 };
-  payments.forEach(({ payment }) => {
-    totals[payment.method] += payment.amount;
-  });
-  const grandTotal = payments.reduce((sum, { payment }) => sum + payment.amount, 0);
+  const totals = byMethod;
+  const grandTotal = (Object.values(byMethod) as number[]).reduce((sum, v) => sum + v, 0);
 
   return (
     <div className="flex flex-col gap-3">

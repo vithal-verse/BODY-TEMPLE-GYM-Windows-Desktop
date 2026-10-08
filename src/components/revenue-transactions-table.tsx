@@ -1,8 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Search, ArrowUpDown, Download, Banknote, Smartphone, CreditCard, MoreHorizontal } from "lucide-react";
-import type { PaymentWithMember } from "@/lib/payments";
+import { api, errorMessage } from "@/lib/api";
+import { useAsync } from "@/lib/use-async";
+import { useDebounced } from "@/lib/use-debounced";
+import { useDialog } from "@/components/dialog-provider";
+import { PageState } from "@/components/page-state";
 import type { PaymentMethod } from "@/types/database";
 import { cn, formatCurrency } from "@/lib/utils";
 
@@ -24,47 +28,25 @@ const METHOD_FILTERS: { key: PaymentMethod | "all"; label: string }[] = [
 type SortKey = "paid_at" | "amount";
 const PAGE_SIZE = 15;
 
-function toCsvValue(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  const str = String(value);
-  if (str.includes(",") || str.includes('"') || str.includes("\n")) {
-    return `"${str.replace(/"/g, '""')}"`;
-  }
-  return str;
-}
-
-export default function RevenueTransactionsTable({
-  payments,
-}: {
-  payments: PaymentWithMember[];
-}) {
+export default function RevenueTransactionsTable({ startIso, endIso }: { startIso: string; endIso: string }) {
+  const dialog = useDialog();
   const [query, setQuery] = useState("");
   const [methodFilter, setMethodFilter] = useState<PaymentMethod | "all">("all");
   const [sortKey, setSortKey] = useState<SortKey>("paid_at");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
+  const [exporting, setExporting] = useState(false);
+  const debouncedQuery = useDebounced(query, 250);
 
-  const filtered = useMemo(() => {
-    let result = payments;
-    if (methodFilter !== "all") {
-      result = result.filter((p) => p.payment.method === methodFilter);
-    }
-    const q = query.trim().toLowerCase();
-    if (q) {
-      result = result.filter((p) => p.member.name.toLowerCase().includes(q));
-    }
-    result = [...result].sort((a, b) => {
-      const cmp =
-        sortKey === "amount"
-          ? a.payment.amount - b.payment.amount
-          : new Date(a.payment.paid_at).getTime() - new Date(b.payment.paid_at).getTime();
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return result;
-  }, [payments, methodFilter, query, sortKey, sortDir]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const filters = { startIso, endIso, method: methodFilter, query: debouncedQuery, sortKey, sortDir } as const;
+  const { data, error } = useAsync(
+    () => api.revenue.report({ ...filters, page, pageSize: PAGE_SIZE }),
+    [startIso, endIso, methodFilter, debouncedQuery, sortKey, sortDir, page]
+  );
+  if (!data) return <PageState error={error} />;
+  const table = data.table;
+  const paginated = table.rows;
+  const totalPages = Math.max(1, Math.ceil(table.total / PAGE_SIZE));
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -75,30 +57,15 @@ export default function RevenueTransactionsTable({
     setPage(1);
   }
 
-  function handleExport() {
-    const header = ["Member", "Amount", "Method", "Date", "Notes"].join(",");
-    const rows = filtered.map(({ payment, member }) =>
-      [
-        member.name,
-        payment.amount,
-        payment.method,
-        new Date(payment.paid_at).toISOString(),
-        payment.notes ?? "",
-      ]
-        .map(toCsvValue)
-        .join(",")
-    );
-    const csv = [header, ...rows].join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    const today = new Date().toISOString().split("T")[0];
-    link.href = url;
-    link.download = `body-temple-gym-revenue-${today}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+  async function handleExport() {
+    setExporting(true);
+    try {
+      await api.exports.revenue(filters); // every row matching the filters, via the Windows "Save as" dialog
+    } catch (err) {
+      await dialog.alert(`Couldn't export the transactions: ${errorMessage(err)}`);
+    } finally {
+      setExporting(false);
+    }
   }
 
   return (
@@ -136,7 +103,7 @@ export default function RevenueTransactionsTable({
           ))}
           <button
             onClick={handleExport}
-            disabled={filtered.length === 0}
+            disabled={table.total === 0 || exporting}
             className="flex items-center gap-2 bg-mango px-3 py-2 font-body text-xs font-semibold uppercase tracking-wide text-ink transition-colors hover:bg-mango-deep disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Download className="h-3.5 w-3.5" />
@@ -146,8 +113,8 @@ export default function RevenueTransactionsTable({
       </div>
 
       <p className="font-body text-xs text-paper/40">
-        {filtered.length} {filtered.length === 1 ? "transaction" : "transactions"} —{" "}
-        {formatCurrency(filtered.reduce((sum, p) => sum + p.payment.amount, 0))} total.
+        {table.total} {table.total === 1 ? "transaction" : "transactions"} —{" "}
+        {formatCurrency(table.filteredTotal)} total.
       </p>
 
       {paginated.length === 0 ? (

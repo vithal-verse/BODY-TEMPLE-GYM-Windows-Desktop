@@ -1,7 +1,11 @@
 "use client";
 
 import { Download, FileSpreadsheet } from "lucide-react";
-import type { Member } from "@/types/database";
+import { useState } from "react";
+import { api, errorMessage } from "@/lib/api";
+import { useAsync } from "@/lib/use-async";
+import { useDialog } from "@/components/dialog-provider";
+import { PageState } from "@/components/page-state";
 import { formatDate, formatCurrency } from "@/lib/utils";
 
 const HEADERS = [
@@ -18,49 +22,27 @@ const HEADERS = [
   "Status",
 ];
 
-function rowValues(m: Member): (string | number)[] {
-  return [
-    m.name,
-    m.age ?? "",
-    m.email ?? "",
-    m.phone ?? "",
-    m.plan_name ?? "",
-    m.start_date ?? "",
-    m.end_date ?? "",
-    m.amount_due,
-    m.fees_paid,
-    Math.max(0, m.amount_due - m.fees_paid),
-    m.status,
-  ];
-}
+export default function ExportPanel() {
+  const dialog = useDialog();
+  const [busy, setBusy] = useState(false);
+  const [savedTo, setSavedTo] = useState<string | null>(null);
+  // Only the first five rows are needed for the preview; the file itself is built by the main process.
+  const { data, error } = useAsync(() => api.members.list({ pageSize: 5, sortKey: "created_at" }), []);
+  if (!data) return <PageState error={error} />;
+  const members = data.rows;
+  const total = data.total;
 
-function toCsvValue(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  const str = String(value);
-  if (str.includes(",") || str.includes('"') || str.includes("\n")) {
-    return `"${str.replace(/"/g, '""')}"`;
-  }
-  return str;
-}
-
-export default function ExportPanel({ members }: { members: Member[] }) {
-  function handleExport() {
-    const header = HEADERS.join(",");
-    const rows = members.map((m) =>
-      rowValues(m).map(toCsvValue).join(",")
-    );
-    const csv = [header, ...rows].join("\n");
-
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    const today = new Date().toISOString().split("T")[0];
-    link.href = url;
-    link.download = `body-temple-gym-members-${today}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+  async function handleExport() {
+    setBusy(true);
+    setSavedTo(null);
+    try {
+      const r = await api.exports.members(); // opens the Windows "Save as" dialog
+      if (r.done && r.path) setSavedTo(r.path);
+    } catch (err) {
+      await dialog.alert(`Couldn't export the member list: ${errorMessage(err)}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -72,7 +54,7 @@ export default function ExportPanel({ members }: { members: Member[] }) {
           </span>
           <div>
             <p className="font-display text-lg text-paper">
-              {members.length} {members.length === 1 ? "member" : "members"}{" "}
+              {total} {total === 1 ? "member" : "members"}{" "}
               ready to export
             </p>
             <p className="font-body text-sm text-paper/40">
@@ -82,16 +64,22 @@ export default function ExportPanel({ members }: { members: Member[] }) {
         </div>
         <button
           onClick={handleExport}
-          disabled={members.length === 0}
+          disabled={total === 0 || busy}
           className="flex w-full items-center justify-center gap-2 bg-mango px-6 py-3 font-display text-lg tracking-wide text-ink transition-colors hover:bg-mango-deep disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
         >
           <Download className="h-5 w-5" />
-          Download CSV
+          {busy ? "Saving…" : "Download CSV"}
         </button>
       </div>
 
+      {savedTo && (
+        <p role="status" className="border-l-4 border-good bg-good/10 px-4 py-3 font-body text-sm text-good">
+          Saved to {savedTo}
+        </p>
+      )}
+
       {/* Preview */}
-      {members.length > 0 && (
+      {total > 0 && (
         <div className="overflow-x-auto border-2 border-ink-line">
           <table className="w-full min-w-[900px] border-collapse">
             <thead>
@@ -107,7 +95,7 @@ export default function ExportPanel({ members }: { members: Member[] }) {
               </tr>
             </thead>
             <tbody>
-              {members.slice(0, 5).map((m) => {
+              {members.map((m) => {
                 const outstanding = Math.max(0, m.amount_due - m.fees_paid);
                 return (
                   <tr key={m.id} className="border-b border-ink-line last:border-b-0">
@@ -127,9 +115,9 @@ export default function ExportPanel({ members }: { members: Member[] }) {
               })}
             </tbody>
           </table>
-          {members.length > 5 && (
+          {total > 5 && (
             <p className="border-t border-ink-line bg-ink-raised px-4 py-2 font-body text-xs text-paper/35">
-              Showing 5 of {members.length} rows. The full list is included
+              Showing 5 of {total} rows. The full list is included
               in the download.
             </p>
           )}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
   BarChart,
   Bar,
@@ -11,8 +11,10 @@ import {
   CartesianGrid,
 } from "recharts";
 import { cn, formatCurrency } from "@/lib/utils";
-import { getRevenueTrend, type RevenueTrendGranularity } from "@/lib/revenue-trend";
-import type { PaymentWithMember } from "@/lib/payments";
+import type { RevenueTrendGranularity } from "@/types/database";
+import { api } from "@/lib/api";
+import { useAsync } from "@/lib/use-async";
+import { PageState } from "@/components/page-state";
 
 const OPTIONS: { key: RevenueTrendGranularity; label: string }[] = [
   { key: "daily", label: "Daily" },
@@ -20,17 +22,13 @@ const OPTIONS: { key: RevenueTrendGranularity; label: string }[] = [
   { key: "monthly", label: "Monthly" },
 ];
 
-export default function RevenueTrendChart({
-  allPayments,
-}: {
-  allPayments: PaymentWithMember[];
-}) {
+export default function RevenueTrendChart() {
   const [granularity, setGranularity] = useState<RevenueTrendGranularity>("daily");
-  // Always computed from the full, unfiltered payment set — a trend chart
-  // scoped down to "Today" would just be one bar, so this is deliberately
-  // independent of the page's date-range filter, same as the equivalent
-  // chart on the Attendance page.
-  const points = useMemo(() => getRevenueTrend(allPayments, granularity), [allPayments, granularity]);
+  // Always the recent history of ALL payments — deliberately independent of the page's date-range
+  // filter (a chart scoped to "Today" would just be one bar), same as the Attendance trend.
+  const { data, error } = useAsync(() => api.revenue.trend(), []);
+  if (!data) return <PageState error={error} />;
+  const points = data[granularity];
 
   return (
     <div>
