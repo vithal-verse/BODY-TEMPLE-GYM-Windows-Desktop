@@ -33,8 +33,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    void recheck();
-  }, [recheck]);
+    let live = true;
+    api.auth.status().then(
+      (s) => live && setState({ loading: false, hasAdmin: s.hasAdmin, session: s.session }),
+      () => live && setState({ loading: false, hasAdmin: true, session: null })
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
 
   // The main process tells us when the session was ended underneath us (e.g. after a restore).
   useEffect(() => window.gym?.events.onSessionEnded(() => void recheck()), [recheck]);

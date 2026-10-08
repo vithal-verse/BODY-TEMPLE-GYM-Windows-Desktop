@@ -98,3 +98,25 @@ export function RecoveryCodeNotice({ code, onDone, doneLabel = "Continue" }: { c
     </div>
   );
 }
+
+export function Card({ title, subtitle, children, className }: { title?: string; subtitle?: string; children: ReactNode; className?: string }) {
+  return (
+    <section className={cn("border-2 border-ink-line bg-ink-raised p-6", className)}>
+      {title && <h3 className="font-display text-xl text-paper">{title}</h3>}
+      {subtitle && <p className="mt-1 font-body text-sm leading-relaxed text-paper/45">{subtitle}</p>}
+      <div className={title ? "mt-5" : ""}>{children}</div>
+    </section>
+  );
+}
+
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+export type Note = { kind: "ok" | "err"; text: string } | null;
+export function NoteView({ note }: { note: Note }) {
+  if (!note) return null;
+  return note.kind === "ok" ? <OkNote>{note.text}</OkNote> : <ErrorNote>{note.text}</ErrorNote>;
+}
